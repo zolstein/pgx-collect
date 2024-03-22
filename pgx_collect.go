@@ -315,7 +315,7 @@ func RowToAddrOfStructByPos[T any]() rowSpecRes[*T] {
 }
 
 func (rs *positionalStructScanner[T]) Initialize(rows pgx.Rows) error {
-	typ := reflect.TypeFor[T]()
+	typ := typeFor[T]()
 	if typ.Kind() != reflect.Struct {
 		return fmt.Errorf("generic type '%s' is not a struct", typ.Name())
 	}
@@ -455,7 +455,7 @@ func (rs *laxNamedStructScanner[T]) Initialize(rows pgx.Rows) error {
 }
 
 func (rs *namedStructScanner[T]) initialize(rows pgx.Rows, lax bool) error {
-	typ := reflect.TypeFor[T]()
+	typ := typeFor[T]()
 	if typ.Kind() != reflect.Struct {
 		return fmt.Errorf("generic type '%s' is not a struct", typ.Name())
 	}
@@ -551,6 +551,12 @@ func fieldPosByName(fldDescs []pgconn.FieldDescription, field string) (i int) {
 		}
 	}
 	return
+}
+
+func typeFor[T any]() reflect.Type {
+	// Definition copied from reflect.TypeFor.
+	// TODO: Use reflect.TypeFor when we support for go versions < 1.22 is dropped.
+	return reflect.TypeOf((*T)(nil)).Elem()
 }
 
 // structScanner encapsulates the logic to scan a row into fields of a struct.
