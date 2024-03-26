@@ -3,13 +3,11 @@ package pgx_collect
 import (
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-)
 
-const structTagKey = "db"
+	. "github.com/zolstein/pgx-collect/internal"
+)
 
 // Scanner provides an interface for scanning a row into a receiver value,
 // while doing type-checking and initialization only once per query.
@@ -253,29 +251,6 @@ func (rs *simpleScanner[T]) ScanRowInto(receiver *T, rows pgx.Rows) error {
 	return rows.Scan(rs.scanTargets...)
 }
 
-// structRowField describes a field of a struct.
-type structRowField struct {
-	// TODO: It would be a bit more efficient to track the path using the pointer
-	// offset within the (outermost) struct and use unsafe.Pointer arithmetic to
-	// construct references when scanning rows. However, it's not clear it's worth
-	// using unsafe for this.
-	path []int
-}
-
-func (f structRowField) isSet() bool {
-	return f.path != nil
-}
-
-type structRowFieldReceiver reflect.Value
-
-func receiverFromPointer[T any](ptr *T) structRowFieldReceiver {
-	return structRowFieldReceiver(reflect.ValueOf(ptr).Elem())
-}
-
-func (r structRowFieldReceiver) getField(f structRowField) any {
-	return reflect.Value(r).FieldByIndex(f.path).Addr().Interface()
-}
-
 type positionalStructScanner[T any] struct {
 	structScanner[T]
 }
@@ -320,41 +295,9 @@ func (rs *positionalStructScanner[T]) Initialize(rows pgx.Rows) error {
 		return fmt.Errorf("generic type '%s' is not a struct", typ.Name())
 	}
 	fldDescs := rows.FieldDescriptions()
-	rs.fields = make([]structRowField, 0, len(fldDescs))
-	rs.populateFields(typ, &[]int{})
-	if len(rs.fields) != len(fldDescs) {
-		return fmt.Errorf(
-			"got %d values, but dst struct has only %d fields",
-			len(fldDescs),
-			len(rs.fields),
-		)
-	}
-	return nil
-}
-
-func (rs *positionalStructScanner[T]) populateFields(t reflect.Type, fieldStack *[]int) {
-	// TODO: The mapping from t -> fields is static. We can do this just once per type and cache
-	// the value to avoid re-computing the fields for each query.
-	tail := len(*fieldStack)
-	*fieldStack = append(*fieldStack, 0)
-	for i := 0; i < t.NumField(); i++ {
-		sf := t.Field(i)
-		(*fieldStack)[tail] = i
-		// Handle anonymous struct embedding, but do not try to handle embedded pointers.
-		if sf.Anonymous && sf.Type.Kind() == reflect.Struct {
-			rs.populateFields(sf.Type, fieldStack)
-		} else if sf.PkgPath == "" {
-			dbTag, _ := sf.Tag.Lookup(structTagKey)
-			if dbTag == "-" {
-				// Field is ignored, skip it.
-				continue
-			}
-			rs.fields = append(rs.fields, structRowField{
-				path: append([]int(nil), *fieldStack...),
-			})
-		}
-	}
-	*fieldStack = (*fieldStack)[:tail]
+	var err error
+	rs.scanFields, err = GetStructRowFieldsByPos(typ, fldDescs)
+	return err
 }
 
 type namedStructScanner[T any] struct {
@@ -460,97 +403,16 @@ func (rs *namedStructScanner[T]) initialize(rows pgx.Rows, lax bool) error {
 		return fmt.Errorf("generic type '%s' is not a struct", typ.Name())
 	}
 	fldDescs := rows.FieldDescriptions()
-	rs.fields = make([]structRowField, len(fldDescs))
-	err := rs.populateFields(fldDescs, lax, typ, &[]int{})
-	if err != nil {
+	var missingField string
+	var err error
+	rs.scanFields, missingField, err = GetStructRowFieldsByName(typ, fldDescs)
+	if !lax && missingField != "" {
+		return fmt.Errorf("cannot find field %s in returned row", missingField)
+	} else if err != nil {
 		return err
 	}
 
-	for i, f := range rs.fields {
-		if !f.isSet() {
-			return fmt.Errorf(
-				"struct doesn't have corresponding row field %s",
-				rows.FieldDescriptions()[i].Name,
-			)
-		}
-	}
-
 	return nil
-}
-
-func (rs *namedStructScanner[T]) populateFields(
-	fldDescs []pgconn.FieldDescription,
-	lax bool,
-	t reflect.Type,
-	fieldStack *[]int,
-) error {
-	// TODO: The mapping from (t, fldDescs) -> fields is static. We can do this just once
-	// per type / field-list and cache the value to avoid re-computing the fields for each query.
-	// However, this is slightly harder than in the positional scanner because it's we need an
-	// immutable (and ideally small and cheaply comparable) representation of the field-set.
-	// Joining the field names with a character that's invalid in postgresql column names could
-	// work, but it is not bounded in size. Regardless, it's still probaby cheaper than re-running
-	// fieldPosByName in a loop.
-	var err error
-
-	tail := len(*fieldStack)
-	*fieldStack = append(*fieldStack, 0)
-	for i := 0; i < t.NumField(); i++ {
-		sf := t.Field(i)
-		(*fieldStack)[tail] = i
-		if sf.PkgPath != "" && !sf.Anonymous {
-			// Field is unexported, skip it.
-			continue
-		}
-		// Handle anonymous struct embedding, but do not try to handle embedded pointers.
-		if sf.Anonymous && sf.Type.Kind() == reflect.Struct {
-			err = rs.populateFields(fldDescs, lax, sf.Type, fieldStack)
-			if err != nil {
-				return err
-			}
-		} else {
-			dbTag, dbTagPresent := sf.Tag.Lookup(structTagKey)
-			if dbTagPresent {
-				dbTag, _, _ = strings.Cut(dbTag, ",")
-			}
-			if dbTag == "-" {
-				// Field is ignored, skip it.
-				continue
-			}
-			colName := dbTag
-			if !dbTagPresent {
-				colName = sf.Name
-			}
-			fpos := fieldPosByName(fldDescs, colName)
-			if fpos == -1 {
-				if lax {
-					continue
-				}
-				return fmt.Errorf("cannot find field %s in returned row", colName)
-			}
-			rs.fields[fpos] = structRowField{
-				path: append([]int(nil), *fieldStack...),
-			}
-		}
-	}
-	*fieldStack = (*fieldStack)[:tail]
-
-	return err
-}
-
-func fieldPosByName(fldDescs []pgconn.FieldDescription, field string) (i int) {
-	i = -1
-	for i, desc := range fldDescs {
-
-		// Snake case support.
-		field = strings.ReplaceAll(field, "_", "")
-		descName := strings.ReplaceAll(desc.Name, "_", "")
-
-		if strings.EqualFold(descName, field) {
-			return i
-		}
-	}
-	return
 }
 
 func typeFor[T any]() reflect.Type {
@@ -561,23 +423,17 @@ func typeFor[T any]() reflect.Type {
 
 // structScanner encapsulates the logic to scan a row into fields of a struct.
 type structScanner[T any] struct {
-	fields      []structRowField
+	scanFields  StructRowFields
 	scanTargets []any
 }
 
 func (rs *structScanner[T]) ScanRowInto(receiver *T, rows pgx.Rows) error {
-	rs.setupScanTargets(receiver)
-	return rows.Scan(rs.scanTargets...)
-}
-
-func (rs *structScanner[T]) setupScanTargets(receiver *T) {
-	r := receiverFromPointer(receiver)
 	if rs.scanTargets == nil {
-		rs.scanTargets = make([]any, len(rs.fields))
+		rs.scanTargets = make([]any, rs.scanFields.NumFields())
 	}
-	for i, f := range rs.fields {
-		rs.scanTargets[i] = r.getField(f)
-	}
+	r := ReceiverFromPointer(receiver)
+	rs.scanFields.Populate(r, rs.scanTargets)
+	return rows.Scan(rs.scanTargets...)
 }
 
 // addrScannerInfo wraps a Scanner[T] into a Scanner[*T].
