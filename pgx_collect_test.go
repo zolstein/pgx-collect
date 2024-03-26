@@ -2,19 +2,17 @@ package pgx_collect_test
 
 import (
 	"fmt"
-	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
 	pgxc "github.com/zolstein/pgx-collect"
+	. "github.com/zolstein/pgx-collect/internal/testutils"
 )
 
 func TestCollectRows(t *testing.T) {
-	makeExpectedAndRows := func(size int) ([]int, *mockRows) {
+	makeExpectedAndRows := func(size int) ([]int, *MockRows) {
 		expected := make([]int, size)
 		for i := range expected {
 			expected[i] = i + 1
@@ -25,7 +23,7 @@ func TestCollectRows(t *testing.T) {
 			vals[i] = v
 		}
 
-		rows := MockRows("id", oneCol(vals...))
+		rows := MakeMockRows("id", OneCol(vals...))
 		return expected, rows
 	}
 
@@ -38,7 +36,7 @@ func TestCollectRows(t *testing.T) {
 				actual, err := pgxc.CollectRows(rows, pgxc.RowTo[int])
 				require.NoError(t, err)
 				require.Equal(t, expected, actual)
-				require.True(t, rows.closed)
+				require.True(t, rows.IsClosed())
 
 				rows.Reset()
 				pgxVal, err := pgx.CollectRows(rows, pgx.RowTo[int])
@@ -57,7 +55,7 @@ func TestCollectRows(t *testing.T) {
 				actual, err := pgxc.CollectRows(rows, pgxc.RowTo[int])
 				require.Error(t, err)
 				require.Nil(t, actual)
-				require.True(t, rows.closed)
+				require.True(t, rows.IsClosed())
 			})
 		}
 	})
@@ -73,7 +71,7 @@ func TestCollectRows(t *testing.T) {
 					if err == nil {
 						require.Fail(t, "Did not panic.")
 					}
-					require.True(t, rows.closed)
+					require.True(t, rows.IsClosed())
 				}()
 				pgxc.CollectRows(rows, pgxc.RowTo[int])
 				require.Fail(t, "Did not panic.")
@@ -83,7 +81,7 @@ func TestCollectRows(t *testing.T) {
 }
 
 func TestAppendRows(t *testing.T) {
-	makeExpectedAndRows := func(size int) ([]int, *mockRows) {
+	makeExpectedAndRows := func(size int) ([]int, *MockRows) {
 		expected := make([]int, size)
 		for i := range expected {
 			expected[i] = i + 1
@@ -94,7 +92,7 @@ func TestAppendRows(t *testing.T) {
 			vals[i] = v
 		}
 
-		rows := MockRows("id", oneCol(vals...))
+		rows := MakeMockRows("id", OneCol(vals...))
 		return expected, rows
 	}
 
@@ -111,7 +109,7 @@ func TestAppendRows(t *testing.T) {
 				actual, err := pgxc.AppendRows(base, rows, pgxc.RowTo[int])
 				require.NoError(t, err)
 				require.Equal(t, expected, actual)
-				require.True(t, rows.closed)
+				require.True(t, rows.IsClosed())
 				require.Equal(t, unchanged, base)
 
 				rows.Reset()
@@ -134,7 +132,7 @@ func TestAppendRows(t *testing.T) {
 				actual, err := pgxc.AppendRows(base, rows, pgxc.RowTo[int])
 				require.Error(t, err)
 				require.Nil(t, actual)
-				require.True(t, rows.closed)
+				require.True(t, rows.IsClosed())
 				require.Equal(t, unchanged, base)
 			})
 		}
@@ -154,7 +152,7 @@ func TestAppendRows(t *testing.T) {
 					if err == nil {
 						require.Fail(t, "Did not panic.")
 					}
-					require.True(t, rows.closed)
+					require.True(t, rows.IsClosed())
 					require.Equal(t, unchanged, base)
 				}()
 				pgxc.AppendRows(base, rows, pgxc.RowTo[int])
@@ -165,13 +163,13 @@ func TestAppendRows(t *testing.T) {
 }
 
 func TestCollectOneRow(t *testing.T) {
-	makeRows := func(size int) *mockRows {
+	makeRows := func(size int) *MockRows {
 		vals := make([]any, size)
 		for i := range vals {
 			vals[i] = i + 1
 		}
 
-		rows := MockRows("id", oneCol(vals...))
+		rows := MakeMockRows("id", OneCol(vals...))
 		return rows
 	}
 
@@ -185,7 +183,7 @@ func TestCollectOneRow(t *testing.T) {
 				actual, err := pgxc.CollectOneRow(rows, pgxc.RowTo[int])
 				require.NoError(t, err)
 				require.Equal(t, expected, actual)
-				require.True(t, rows.closed)
+				require.True(t, rows.IsClosed())
 
 				rows.Reset()
 				pgxVal, err := pgx.CollectOneRow(rows, pgx.RowTo[int])
@@ -220,7 +218,7 @@ func TestCollectOneRow(t *testing.T) {
 			if err == nil {
 				require.Fail(t, "Did not panic.")
 			}
-			require.True(t, rows.closed)
+			require.True(t, rows.IsClosed())
 		}()
 		pgxc.CollectOneRow(rows, pgxc.RowTo[int])
 		require.Fail(t, "Did not panic.")
@@ -228,13 +226,13 @@ func TestCollectOneRow(t *testing.T) {
 }
 
 func TestCollectExcatlyOneRow(t *testing.T) {
-	makeRows := func(size int) *mockRows {
+	makeRows := func(size int) *MockRows {
 		vals := make([]any, size)
 		for i := range vals {
 			vals[i] = i + 1
 		}
 
-		rows := MockRows("id", oneCol(vals...))
+		rows := MakeMockRows("id", OneCol(vals...))
 		return rows
 	}
 
@@ -245,7 +243,7 @@ func TestCollectExcatlyOneRow(t *testing.T) {
 		actual, err := pgxc.CollectExactlyOneRow(rows, pgxc.RowTo[int])
 		require.NoError(t, err)
 		require.Equal(t, expected, actual)
-		require.True(t, rows.closed)
+		require.True(t, rows.IsClosed())
 
 		rows.Reset()
 		pgxVal, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[int])
@@ -284,7 +282,7 @@ func TestCollectExcatlyOneRow(t *testing.T) {
 			if err == nil {
 				require.Fail(t, "Did not panic.")
 			}
-			require.True(t, rows.closed)
+			require.True(t, rows.IsClosed())
 		}()
 		pgxc.CollectExactlyOneRow(rows, pgxc.RowTo[int])
 		require.Fail(t, "Did not panic.")
@@ -292,17 +290,17 @@ func TestCollectExcatlyOneRow(t *testing.T) {
 }
 
 func TestSimpleRowScanner(t *testing.T) {
-	rows := MockRows("id", oneRow(1))
+	rows := MakeMockRows("id", OneRow(1))
 	checkScanOne(t, rows, pgxc.RowTo[int], pgx.RowTo[int], 1)
 }
 
 func TestAddrRowScanner(t *testing.T) {
-	rows := MockRows("id", oneRow(1))
-	checkScanOne(t, rows, pgxc.RowToAddrOf[int], pgx.RowToAddrOf[int], ref(1))
+	rows := MakeMockRows("id", OneRow(1))
+	checkScanOne(t, rows, pgxc.RowToAddrOf[int], pgx.RowToAddrOf[int], Ref(1))
 }
 
 func TestMapRowScanner(t *testing.T) {
-	rows := MockRows("id,name,age", oneRow(1, "Alice", 30))
+	rows := MakeMockRows("id,name,age", OneRow(1, "Alice", 30))
 	expected := map[string]any{
 		"id":   1,
 		"name": "Alice",
@@ -318,7 +316,7 @@ func TestPositionalStructRowScanner(t *testing.T) {
 			Age  int32
 		}
 
-		rows := MockRows("name,age", oneRow("Alice", int32(30)))
+		rows := MakeMockRows("name,age", OneRow("Alice", int32(30)))
 		expected := person{"Alice", 30}
 		checkStructByPosSuccess(t, rows, expected)
 	}
@@ -328,7 +326,7 @@ func TestPositionalStructRowScanner(t *testing.T) {
 			Age  int32 `db:"-"`
 		}
 
-		rows := MockRows("name", oneRow("Alice"))
+		rows := MakeMockRows("name", OneRow("Alice"))
 		expected := person{Name: "Alice"}
 		checkStructByPosSuccess(t, rows, expected)
 	}
@@ -343,7 +341,7 @@ func TestPositionalStructRowScanner(t *testing.T) {
 			Age int32
 		}
 
-		rows := MockRows("first_name,last_name,age", oneRow("John", "Smith", int32(25)))
+		rows := MakeMockRows("first_name,last_name,age", OneRow("John", "Smith", int32(25)))
 		expected := person{Name{First: "John", Last: "Smith"}, 25}
 		checkStructByPosSuccess(t, rows, expected)
 	}
@@ -361,7 +359,7 @@ func TestPositionalStructRowScanner(t *testing.T) {
 			Drink
 		}
 
-		rows := MockRows("bread,salad,drink_ml", oneRow("Baguette", "Lettuce", 500))
+		rows := MakeMockRows("bread,salad,drink_ml", OneRow("Baguette", "Lettuce", 500))
 		expected := meal{Sandwich{"Baguette", "Lettuce"}, Drink{500}}
 		checkStructByPosSuccess(t, rows, expected)
 	}
@@ -376,7 +374,7 @@ func TestPositionalStructRowScanner(t *testing.T) {
 			Age int32
 		}
 
-		rows := MockRows("first_name,last_name,age", oneRow("John", "Smith", int32(25)))
+		rows := MakeMockRows("first_name,last_name,age", OneRow("John", "Smith", int32(25)))
 		expected := person{name{"John", "Smith"}, 25}
 		checkStructByPosSuccess(t, rows, expected)
 	}
@@ -391,12 +389,12 @@ func TestPositionalStructRowScanner(t *testing.T) {
 			Age int32
 		}
 
-		rows := MockRows("first_name,last_name,age", oneRow("John", "Smith", int32(25)))
+		rows := MakeMockRows("first_name,last_name,age", OneRow("John", "Smith", int32(25)))
 		checkStructByPosFail[person](t, rows)
 	}
 }
 
-func checkStructByPosSuccess[T any](t *testing.T, rows *mockRows, expected T) {
+func checkStructByPosSuccess[T any](t *testing.T, rows *MockRows, expected T) {
 	t.Helper()
 	rs := pgxc.RowToStructByPos[T]
 	rsAddr := pgxc.RowToAddrOfStructByPos[T]
@@ -407,7 +405,7 @@ func checkStructByPosSuccess[T any](t *testing.T, rows *mockRows, expected T) {
 	checkScanOne(t, rows, rsAddr, pgxRowToAddr, &expected)
 }
 
-func checkStructByPosFail[T any](t *testing.T, rows *mockRows) {
+func checkStructByPosFail[T any](t *testing.T, rows *MockRows) {
 	t.Helper()
 	rs := pgxc.RowToStructByPos[T]
 	rsAddr := pgxc.RowToAddrOfStructByPos[T]
@@ -429,18 +427,21 @@ func TestNamedStructRowScanner(t *testing.T) {
 		}
 
 		{
-			rows := MockRows("first,last,age,account_id", oneRow("John", "Smith", int32(25), accID))
+			rows := MakeMockRows(
+				"first,last,age,account_id",
+				OneRow("John", "Smith", int32(25), accID),
+			)
 			expected := person{"Smith", "John", 25, accID}
 			checkStructByNameSuccess(t, rows, expected)
 		}
 		{
-			rows := MockRows("last,age,account_id", oneRow("Smith", int32(25), accID))
+			rows := MakeMockRows("last,age,account_id", OneRow("Smith", int32(25), accID))
 			checkStructByNameFail[person](t, rows)
 		}
 		{
-			rows := MockRows(
+			rows := MakeMockRows(
 				"first,last,age,account_id,ignore",
-				oneRow("John", "Smith", int32(25), accID, nil),
+				OneRow("John", "Smith", int32(25), accID, nil),
 			)
 			checkStructByNameFail[person](t, rows)
 		}
@@ -458,26 +459,26 @@ func TestNamedStructRowScanner(t *testing.T) {
 		}
 
 		{
-			rows := MockRows("first_name,last_name,age", oneRow("John", "Smith", int32(25)))
+			rows := MakeMockRows("first_name,last_name,age", OneRow("John", "Smith", int32(25)))
 			expected := person{Name: Name{"Smith", "John"}, Age: 25}
 			checkStructByNameSuccess(t, rows, expected)
 		}
 		{
-			rows := MockRows("last,age", oneRow("Smith", int32(25)))
+			rows := MakeMockRows("last,age", OneRow("Smith", int32(25)))
 			checkStructByNameFail[person](t, rows)
 		}
 		{
-			rows := MockRows("first,last,age,ignore", oneRow("John", "Smith", int32(25), nil))
+			rows := MakeMockRows("first,last,age,ignore", OneRow("John", "Smith", int32(25), nil))
 			checkStructByNameFail[person](t, rows)
 		}
 		{
-			rows := MockRows("last,age", oneRow("Smith", int32(25)))
+			rows := MakeMockRows("last,age", OneRow("Smith", int32(25)))
 			checkStructByNameFail[person](t, rows)
 		}
 	}
 }
 
-func checkStructByNameSuccess[T any](t *testing.T, rows *mockRows, expected T) {
+func checkStructByNameSuccess[T any](t *testing.T, rows *MockRows, expected T) {
 	t.Helper()
 	rs := pgxc.RowToStructByName[T]
 	rsAddr := pgxc.RowToAddrOfStructByName[T]
@@ -488,7 +489,7 @@ func checkStructByNameSuccess[T any](t *testing.T, rows *mockRows, expected T) {
 	checkScanOne(t, rows, rsAddr, pgxRowToAddr, &expected)
 }
 
-func checkStructByNameFail[T any](t *testing.T, rows *mockRows) {
+func checkStructByNameFail[T any](t *testing.T, rows *MockRows) {
 	t.Helper()
 	rs := pgxc.RowToStructByName[T]
 	rsAddr := pgxc.RowToAddrOfStructByName[T]
@@ -509,28 +510,28 @@ func TestLaxNamedStructRowScanner(t *testing.T) {
 		}
 
 		{
-			rows := MockRows("first,last,age", oneRow("John", "Smith", int32(25)))
+			rows := MakeMockRows("first,last,age", OneRow("John", "Smith", int32(25)))
 			expected := person{"Smith", "John", 25, false}
 			checkStructByNameLaxSuccess(t, rows, expected)
 		}
 		{
-			rows := MockRows("first,age", oneRow("John", int32(25)))
+			rows := MakeMockRows("first,age", OneRow("John", int32(25)))
 			expected := person{"", "John", 25, false}
 			checkStructByNameLaxSuccess(t, rows, expected)
 		}
 		{
-			rows := MockRows("first,last,age,ignore", oneRow("John", "Smith", int32(25), nil))
+			rows := MakeMockRows("first,last,age,ignore", OneRow("John", "Smith", int32(25), nil))
 			checkStructByNameLaxFail[person](t, rows)
 		}
 		{
-			rows := MockRows(
+			rows := MakeMockRows(
 				"first,middle,last,age,ignore",
-				oneRow("John", "D.", "Smith", int32(25), nil),
+				OneRow("John", "D.", "Smith", int32(25), nil),
 			)
 			checkStructByNameLaxFail[person](t, rows)
 		}
 		{
-			rows := MockRows("last,age,ignore", oneRow("Smith", int32(25), nil))
+			rows := MakeMockRows("last,age,ignore", OneRow("Smith", int32(25), nil))
 			checkStructByNameLaxFail[person](t, rows)
 		}
 	}
@@ -547,31 +548,31 @@ func TestLaxNamedStructRowScanner(t *testing.T) {
 		}
 
 		{
-			rows := MockRows("first_name,last_name,age", oneRow("John", "Smith", int32(25)))
+			rows := MakeMockRows("first_name,last_name,age", OneRow("John", "Smith", int32(25)))
 			expected := person{false, Name{"Smith", "John"}, 25}
 			checkStructByNameLaxSuccess(t, rows, expected)
 		}
 		{
-			rows := MockRows("first_name,age", oneRow("John", int32(25)))
+			rows := MakeMockRows("first_name,age", OneRow("John", int32(25)))
 			expected := person{false, Name{"", "John"}, 25}
 			checkStructByNameLaxSuccess(t, rows, expected)
 		}
 		{
-			rows := MockRows(
+			rows := MakeMockRows(
 				"first_name,last_name,age,ignore",
-				oneRow("John", "Smith", int32(25), nil),
+				OneRow("John", "Smith", int32(25), nil),
 			)
 			checkStructByNameLaxFail[person](t, rows)
 		}
 		{
-			rows := MockRows(
+			rows := MakeMockRows(
 				"middle_name,last_name,age,ignore",
-				oneRow("D.", "Smith", int32(25), nil),
+				OneRow("D.", "Smith", int32(25), nil),
 			)
 			checkStructByNameLaxFail[person](t, rows)
 		}
 		{
-			rows := MockRows("last_name,age,ignore", oneRow("Smith", int32(25), nil))
+			rows := MakeMockRows("last_name,age,ignore", OneRow("Smith", int32(25), nil))
 			checkStructByNameLaxFail[person](t, rows)
 		}
 	}
@@ -589,13 +590,13 @@ func TestLaxNamedStructRowScanner(t *testing.T) {
 			AnotherTable *AnotherTable `json:"anotherTable" db:"another_table"`
 		}
 
-		rows := MockRows("user_api_key_id,user_id,user", oneRow(101, 1, &User{1, "John Doe"}))
+		rows := MakeMockRows("user_api_key_id,user_id,user", OneRow(101, 1, &User{1, "John Doe"}))
 		expected := UserAPIKey{101, 1, &User{1, "John Doe"}, nil}
 		checkStructByNameLaxSuccess(t, rows, expected)
 	}
 }
 
-func checkStructByNameLaxSuccess[T any](t *testing.T, rows *mockRows, expected T) {
+func checkStructByNameLaxSuccess[T any](t *testing.T, rows *MockRows, expected T) {
 	t.Helper()
 	rs := pgxc.RowToStructByNameLax[T]
 	rsAddr := pgxc.RowToAddrOfStructByNameLax[T]
@@ -606,7 +607,7 @@ func checkStructByNameLaxSuccess[T any](t *testing.T, rows *mockRows, expected T
 	checkScanOne(t, rows, rsAddr, pgxRowToAddr, &expected)
 }
 
-func checkStructByNameLaxFail[T any](t *testing.T, rows *mockRows) {
+func checkStructByNameLaxFail[T any](t *testing.T, rows *MockRows) {
 	t.Helper()
 	rs := pgxc.RowToStructByNameLax[T]
 	rsAddr := pgxc.RowToAddrOfStructByNameLax[T]
@@ -619,7 +620,7 @@ func checkStructByNameLaxFail[T any](t *testing.T, rows *mockRows) {
 
 func checkScanOne[T any](
 	t *testing.T,
-	rows *mockRows,
+	rows *MockRows,
 	rowSpec pgxc.RowSpec[T],
 	rowTo pgx.RowToFunc[T],
 	expected T,
@@ -641,7 +642,7 @@ func checkScanOne[T any](
 
 func checkInitFails[T any](
 	t *testing.T,
-	rows *mockRows,
+	rows *MockRows,
 	rowSpec pgxc.RowSpec[T],
 	rowTo pgx.RowToFunc[T],
 ) {
@@ -653,142 +654,4 @@ func checkInitFails[T any](
 	_, pgxErr := rowTo(rows)
 	require.Error(t, pgxErr)
 	require.Equal(t, err, pgxErr)
-}
-
-func ref[T any](val T) *T {
-	return &val
-}
-
-type rows [][]any
-
-func oneCol[T any](vals ...T) rows {
-	rows := make(rows, len(vals))
-	for i, v := range vals {
-		rows[i] = []any{v}
-	}
-	return rows
-}
-
-func oneRow(vals ...any) rows {
-	return rows{vals}
-}
-
-type mockRows struct {
-	descs  []pgconn.FieldDescription
-	data   rows
-	rowIdx int
-	done   bool
-	err    error
-	closed bool
-	panic  bool
-}
-
-var _ pgx.Rows = (*mockRows)(nil)
-
-func MockRows(fieldNames string, data [][]any) *mockRows {
-	fields := strings.Split(fieldNames, ",")
-	descs := make([]pgconn.FieldDescription, len(fields))
-	for i, s := range fields {
-		descs[i].Name = s
-	}
-	return &mockRows{
-		descs:  descs,
-		data:   data,
-		rowIdx: -1,
-		done:   false,
-	}
-}
-
-func (m *mockRows) ThenErr(err error) {
-	m.err = err
-}
-
-func (m *mockRows) ThenPanic(err error) {
-	m.err = err
-	m.panic = true
-}
-
-func (m *mockRows) Reset() {
-	m.rowIdx = -1
-	m.done = false
-	m.closed = false
-}
-
-func (m *mockRows) FieldDescriptions() []pgconn.FieldDescription {
-	return m.descs
-}
-
-func (m *mockRows) Err() error {
-	if !m.done {
-		panic("Err called before done")
-	}
-	return m.err
-}
-
-func (m *mockRows) Next() bool {
-	m.rowIdx++
-	off := 0
-	if m.err != nil {
-		off = 1
-	}
-	m.done = m.rowIdx >= len(m.data)+off
-	return !m.done
-}
-
-func (m *mockRows) Scan(dest ...any) error {
-	// This is necessary to work with pgx.RowTo.
-	if len(dest) == 1 {
-		if rs, ok := dest[0].(pgx.RowScanner); ok {
-			return rs.ScanRow(m)
-		}
-	}
-	if m.done {
-		panic("Scan called after done")
-	}
-	if m.rowIdx == len(m.data) {
-		if m.panic {
-			panic(m.err)
-		}
-		return m.err
-	}
-	data := m.data[m.rowIdx]
-	if len(data) != len(dest) {
-		return fmt.Errorf("len(data) (%v) != len(dest) (%v)", data, dest)
-	}
-	for i, d := range dest {
-		elem := data[i]
-		reflect.ValueOf(d).Elem().Set(reflect.ValueOf(elem))
-	}
-	return nil
-}
-
-func (m *mockRows) Values() ([]any, error) {
-	if m.done {
-		panic("Scan called after done")
-	}
-	src := m.data[m.rowIdx]
-	dst := make([]any, len(src))
-	copy(dst, src)
-	return dst, nil
-}
-
-func (m *mockRows) Close() {
-	m.done = true
-	m.closed = true
-}
-
-func (m *mockRows) RawValues() [][]byte {
-	// We need to implement this much in order to work with pgx.RowToStructByPos
-	return make([][]byte, len(m.descs))
-}
-
-func (m *mockRows) Conn() *pgx.Conn {
-	panic("mockRows does not implement Conn")
-}
-
-func (m *mockRows) CommandTag() pgconn.CommandTag {
-	if !m.done {
-		panic("CommandTag called before done")
-	}
-	panic("mockRows does not implement CommandTag")
 }
