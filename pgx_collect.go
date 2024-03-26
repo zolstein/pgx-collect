@@ -2,9 +2,11 @@ package pgx_collect
 
 import (
 	"fmt"
+	"hash/fnv"
 	"reflect"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -303,6 +305,7 @@ func (rs *positionalStructScanner[T]) Initialize(rows pgx.Rows) error {
 	return err
 }
 
+// Map from reflect.Type -> []structRowField
 var positionalStructRowFieldsMap sync.Map
 
 func getPositionalStructRowFields(
@@ -444,15 +447,30 @@ func (rs *namedStructScanner[T]) initialize(rows pgx.Rows, lax bool) error {
 	return nil
 }
 
+// Map from namedStructRowFieldsKey -> *[]namedStructRowFieldsEntry
+// The types and method of managing this cache are funky for the following reasons:
+// Different sets / orders of field keys will produce different []structRowField results,
+// so the column names from the fldDesc list needs to be included as part of the cache key.
+// However, slices can't be used in the field of a map - we need an immutable representation.
+// One solution is to create a string joining the column names. However, this requires
+// allocating space for the string in order to look up an existing cache value.
+// It's faster to instead hash the strings and include the hash in the key. However, this
+// introduces a risk that two key sets will collide. To address this, we store a pointer to
+// as slice of entries, and use some somewhat complicated logic to manage updating the list
+// on a collision. The overhead on collisions is probably bad, but this should be exeedingly
+// rare in practice.
 var namedStructRowFieldsMap sync.Map
 
 type namedStructRowFieldsKey struct {
-	typ      reflect.Type
-	colNames string
+	typ          reflect.Type
+	hashColNames uint64
 }
 
 type namedStructRowFieldsEntry struct {
-	fields       []structRowField
+	cols   []string
+	fields []structRowField
+	// missingField is used to report errors when non-lax mappers don't include every field.
+	// It must be the _first_ field in column order in the type, to be consistent with pgx.
 	missingField string
 }
 
@@ -461,64 +479,119 @@ func getNamedStructRowFields(
 	fldDescs []pgconn.FieldDescription,
 ) ([]structRowField, string, error) {
 	key := namedStructRowFieldsKey{
-		typ:      typ,
-		colNames: joinColNames(fldDescs),
+		typ:          typ,
+		hashColNames: hashColNames(fldDescs),
 	}
-	entryIface, ok := namedStructRowFieldsMap.Load(key)
+	var entries []namedStructRowFieldsEntry
+	entriesIface, ok := namedStructRowFieldsMap.Load(key)
 	if !ok {
-		namedFields := lookupNamedStructRowFields(typ)
-		fields := make([]structRowField, len(fldDescs))
-		var missingField string
-		for i := range namedFields {
-			f := &namedFields[i]
-			fpos := fieldPosByName(fldDescs, f.name)
-			if fpos == -1 {
-				if missingField == "" {
-					missingField = f.name
-				}
-				continue
-			}
-			fields[fpos] = f.field
-		}
-		for i, f := range fields {
-			if !f.isSet() {
-				return nil, missingField, fmt.Errorf(
-					"struct doesn't have corresponding row field %s",
-					fldDescs[i].Name,
-				)
+		// Ensure the map contains an entry for the key, so we can compare-and-swap later.
+		var entriesBox []namedStructRowFieldsEntry
+		entriesIface, ok = namedStructRowFieldsMap.LoadOrStore(key, &entriesBox)
+	}
+	if ok {
+		// Make sure one of the entries actually matches this field-set.
+		entries = *(entriesIface.(*[]namedStructRowFieldsEntry))
+		for _, e := range entries {
+			if colsMatch(fldDescs, e.cols) {
+				return e.fields, e.missingField, nil
 			}
 		}
-		entry := &namedStructRowFieldsEntry{
-			fields:       fields,
-			missingField: missingField,
+	}
+	newEntry := buildNamedStructRowFieldsEntry(typ, fldDescs)
+	for i, f := range newEntry.fields {
+		if !f.isSet() {
+			// In this case, this mapping is never valid. We could cache the failure, but
+			// for now it doesn't seem worthwhile to optimize error paths, so we just error out.
+			// This could be expensive if a broken query is issued repeatedly.
+			return nil, newEntry.missingField, fmt.Errorf(
+				"struct doesn't have corresponding row field %s",
+				fldDescs[i].Name,
+			)
 		}
-		entryIface, _ = namedStructRowFieldsMap.LoadOrStore(key, entry)
 	}
 
-	entry := entryIface.(*namedStructRowFieldsEntry)
-	return entry.fields, entry.missingField, nil
+	// Copy existing entries to a new slice, adding the newEntry. Loop to compare-and-swap in
+	// the slice, to make sure we actually cache our result but don't clobber anyone else's
+	// result that occurred since we last checked.
+	for {
+		newEntries := make([]namedStructRowFieldsEntry, len(entries)+1)
+		newEntries[0] = newEntry
+		copy(newEntries[1:], entries)
+		if namedStructRowFieldsMap.CompareAndSwap(key, entriesIface, &newEntries) {
+			return newEntry.fields, newEntry.missingField, nil
+		}
+		entriesIface, _ = namedStructRowFieldsMap.Load(key)
+		entries = *(entriesIface.(*[]namedStructRowFieldsEntry))
+
+		// It's possible (likely?) that if the CAS failed, we conflicted with another operation
+		// inserting the same field-set. Check if the entries we just read includes our field-set.
+		//
+		// We could probably optimize this loop to only look at a subset of the entries,
+		// since some will be repeated from earlier loops. However, it's very unlikely
+		// we get here anyway.
+		for _, e := range entries {
+			if colsMatch(fldDescs, e.cols) {
+				return e.fields, e.missingField, nil
+			}
+		}
+	}
 }
 
-func joinColNames(fldDescs []pgconn.FieldDescription) string {
-	switch len(fldDescs) {
-	case 0:
-		return ""
-	case 1:
-		return fldDescs[0].Name
+func buildNamedStructRowFieldsEntry(
+	typ reflect.Type,
+	fldDescs []pgconn.FieldDescription,
+) namedStructRowFieldsEntry {
+	namedFields := lookupNamedStructRowFields(typ)
+	fields := make([]structRowField, len(fldDescs))
+	var missingField string
+	for i := range namedFields {
+		f := &namedFields[i]
+		fpos := fieldPosByName(fldDescs, f.name)
+		if fpos == -1 {
+			if missingField == "" {
+				missingField = f.name
+			}
+			continue
+		}
+		fields[fpos] = f.field
 	}
+	cols := make([]string, len(fldDescs))
+	for i := range fldDescs {
+		cols[i] = fldDescs[i].Name
+	}
+	entry := namedStructRowFieldsEntry{
+		cols:         cols,
+		fields:       fields,
+		missingField: missingField,
+	}
+	return entry
+}
 
-	totalSize := len(fldDescs) - 1 // Space for separator bytes.
-	for _, d := range fldDescs {
-		totalSize += len(d.Name)
+func colsMatch(fldDescs []pgconn.FieldDescription, colNames []string) bool {
+	if len(fldDescs) != len(colNames) {
+		return false
 	}
-	var b strings.Builder
-	b.Grow(totalSize)
-	b.WriteString(fldDescs[0].Name)
-	for _, d := range fldDescs[1:] {
-		b.WriteByte(0) // Join with NUL byte as it's (presumably) not a valid column character.
-		b.WriteString(d.Name)
+	for i, s := range colNames {
+		if fldDescs[i].Name != s {
+			return false
+		}
 	}
-	return b.String()
+	return true
+}
+
+func hashColNames(fldDescs []pgconn.FieldDescription) uint64 {
+	hasher := fnv.New64()
+	var zeroByte [1]byte
+	_ = zeroByte
+	for _, f := range fldDescs {
+		bs := unsafe.Slice(unsafe.StringData(f.Name), len(f.Name))
+		hasher.Write(bs)
+		// Writing zero bytes between field names reduces the likelihood of collisions.
+		// E.g. "aa","a" hash the same as "a","aa" without zeroes, but different with them.
+		hasher.Write(zeroByte[:])
+	}
+	return hasher.Sum64()
 }
 
 func fieldPosByName(fldDescs []pgconn.FieldDescription, field string) (i int) {
