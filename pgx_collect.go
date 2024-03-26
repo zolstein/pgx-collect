@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -302,21 +303,28 @@ func (rs *positionalStructScanner[T]) Initialize(rows pgx.Rows) error {
 	return err
 }
 
+var positionalStructRowFieldsMap sync.Map
+
 func getPositionalStructRowFields(
 	typ reflect.Type,
 	fldDescs []pgconn.FieldDescription,
 ) ([]structRowField, error) {
-	namedFields := lookupNamedStructRowFields(typ)
-	if len(namedFields) != len(fldDescs) {
+	fieldsIface, ok := positionalStructRowFieldsMap.Load(typ)
+	if !ok {
+		namedFields := lookupNamedStructRowFields(typ)
+		fields := make([]structRowField, len(namedFields))
+		for i := range namedFields {
+			fields[i] = namedFields[i].field
+		}
+		fieldsIface, _ = positionalStructRowFieldsMap.LoadOrStore(typ, fields)
+	}
+	fields := fieldsIface.([]structRowField)
+	if len(fields) != len(fldDescs) {
 		return nil, fmt.Errorf(
 			"got %d values, but dst struct has only %d fields",
 			len(fldDescs),
-			len(namedFields),
+			len(fields),
 		)
-	}
-	fields := make([]structRowField, len(namedFields))
-	for i := range namedFields {
-		fields[i] = namedFields[i].field
 	}
 	return fields, nil
 }
@@ -436,34 +444,81 @@ func (rs *namedStructScanner[T]) initialize(rows pgx.Rows, lax bool) error {
 	return nil
 }
 
+var namedStructRowFieldsMap sync.Map
+
+type namedStructRowFieldsKey struct {
+	typ      reflect.Type
+	colNames string
+}
+
+type namedStructRowFieldsEntry struct {
+	fields       []structRowField
+	missingField string
+}
+
 func getNamedStructRowFields(
 	typ reflect.Type,
 	fldDescs []pgconn.FieldDescription,
 ) ([]structRowField, string, error) {
-	namedFields := lookupNamedStructRowFields(typ)
-	fields := make([]structRowField, len(fldDescs))
-	var missingField string
-	for i := range namedFields {
-		f := &namedFields[i]
-		fpos := fieldPosByName(fldDescs, f.name)
-		if fpos == -1 {
-			if missingField == "" {
-				missingField = f.name
+	key := namedStructRowFieldsKey{
+		typ:      typ,
+		colNames: joinColNames(fldDescs),
+	}
+	entryIface, ok := namedStructRowFieldsMap.Load(key)
+	if !ok {
+		namedFields := lookupNamedStructRowFields(typ)
+		fields := make([]structRowField, len(fldDescs))
+		var missingField string
+		for i := range namedFields {
+			f := &namedFields[i]
+			fpos := fieldPosByName(fldDescs, f.name)
+			if fpos == -1 {
+				if missingField == "" {
+					missingField = f.name
+				}
+				continue
 			}
-			continue
+			fields[fpos] = f.field
 		}
-		fields[fpos] = f.field
+		for i, f := range fields {
+			if !f.isSet() {
+				return nil, missingField, fmt.Errorf(
+					"struct doesn't have corresponding row field %s",
+					fldDescs[i].Name,
+				)
+			}
+		}
+		entry := &namedStructRowFieldsEntry{
+			fields:       fields,
+			missingField: missingField,
+		}
+		entryIface, _ = namedStructRowFieldsMap.LoadOrStore(key, entry)
 	}
 
-	for i, f := range fields {
-		if !f.isSet() {
-			return nil, missingField, fmt.Errorf(
-				"struct doesn't have corresponding row field %s",
-				fldDescs[i].Name,
-			)
-		}
+	entry := entryIface.(*namedStructRowFieldsEntry)
+	return entry.fields, entry.missingField, nil
+}
+
+func joinColNames(fldDescs []pgconn.FieldDescription) string {
+	switch len(fldDescs) {
+	case 0:
+		return ""
+	case 1:
+		return fldDescs[0].Name
 	}
-	return fields, missingField, nil
+
+	totalSize := len(fldDescs) - 1 // Space for separator bytes.
+	for _, d := range fldDescs {
+		totalSize += len(d.Name)
+	}
+	var b strings.Builder
+	b.Grow(totalSize)
+	b.WriteString(fldDescs[0].Name)
+	for _, d := range fldDescs[1:] {
+		b.WriteByte(0) // Join with NUL byte as it's (presumably) not a valid column character.
+		b.WriteString(d.Name)
+	}
+	return b.String()
 }
 
 func fieldPosByName(fldDescs []pgconn.FieldDescription, field string) (i int) {
