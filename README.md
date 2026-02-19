@@ -38,7 +38,8 @@ values, err := pgxc.CollectRows(rows, pgxc.RowToStructByName[Record])
 
 If, when migrating from code using the pgx Collect functions, you need to reuse a custom
 pgx.RowToFunc, you can use the Adapt function as follows. However, be aware that this may
-have sub-par performance and allocate more than using native pgx-collect constructs.
+have sub-par performance and allocate more than using native pgx-collect operations. In
+this case, you should prefer to directly implement the Scanner interface.
 
 ```golang
 import (
