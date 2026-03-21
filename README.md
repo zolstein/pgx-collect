@@ -64,11 +64,15 @@ a large speedup.
 
 # How much faster is it?
 
-When using AppendRows to query 1000 rows and 4 columns in a benchmark, I've demonstrated
-a 3-4x reduction in total runtime, a 10x reduction in memory allocated,
-and a 100x reduction in objects allocated. These numbers will vary greatly by workload.
-Real-world benefits are unlikely to be this large, but they may still improve query
-throughput, especially in pathological cases.
+At the time of writing, when using AppendRows to query 1000 rows and 4 columns in a benchmark,
+I demonstrated a 3-4x reduction in total runtime, a 10x reduction in memory allocated,
+and a 100x reduction in objects allocated. Those numbers would vary greatly by workload, and
+real-world benefits are unlikely to be this large, but they might still have been enough to
+noticeably improve query throughput, especially in pathological cases.
+
+Today, the numbers are likely to be much smaller because I was able to rewrite optimizations
+for many of the most egregious cases in a way that could be upstreamed into pgx. Since then,
+I have not measured the impact. I would still expect performance improvements in some cases.
 
 I encourage anyone using these pgx's collect functions to try out pgx-collect, measure
 the difference, and share the results, particularly if there are further opportunities 
@@ -76,13 +80,12 @@ to optimize.
 
 # Why not merge into pgx? Why create a separate library?
 
-I would love for this code to be merged into pgx. However, even though the pgx-collect API
-is designed as a drop-in replacement for all idiomatic use-cases, the performance improvements
-required changing the types of some values in the public API - thus, if these changes were 
-integrated into pgx, some working code could stop compiling.
+I would love for this code to be merged into pgx. (Some optimizations based on this work have 
+been already. However, even though the pgx-collect API is designed as a drop-in replacement 
+for all idiomatic use-cases, the performance improvements required changing the types of some 
+values in the public API - thus, if these changes were integrated into pgx, some working code 
+could stop compiling.
 
-If at some time in the future pgx can make backward-incompatible changes, I hope it
-integrates these changes. I also hope they can integrate as many of the optimizations as
-possible, though as far as I can tell the API exposed by pgx makes this impossible. In
-lieu of this, I want this code to be available to anyone who wants to use it or learn from
-it.
+If at some time in the future pgx can make backward-incompatible changes, I hope it fully
+integrates these changes. In lieu of this, I want this code to be available to anyone who wants 
+to use it or learn from it.
