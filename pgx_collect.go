@@ -265,7 +265,7 @@ func newPositionalStructScanner[T any]() Scanner[T] {
 	return &positionalStructScanner[T]{}
 }
 
-// newPositionalStructScanner returns a Scanner that scans a *T from a row.
+// newAddrOfPositionalStructScanner returns a Scanner that scans a *T from a row.
 // T must be a struct. T must have the same number of public fields as row has fields.
 // The row and T fields will be matched by position.
 // If the "db" struct tag is "-" then the field will be ignored.
@@ -281,7 +281,7 @@ func RowToStructByPos[T any]() rowSpecRes[T] {
 	return rowSpecRes[T]{fn: newPositionalStructScanner[T]}
 }
 
-// RowToStructByPos scans a row into a *T.
+// RowToAddrOfStructByPos scans a row into a *T.
 // T must be a struct. T must have the same number of public fields as row has fields.
 // The row and T fields will be matched by position.
 // If the "db" struct tag is "-" then the field will be ignored.
@@ -317,7 +317,7 @@ var (
 	_ Scanner[struct{}] = (*laxNamedStructScanner[struct{}])(nil)
 )
 
-// newNamedStructScanner returns Scanner that scans a row into a T.
+// newNamedStructScanner returns a Scanner that scans a row into a T.
 // T must be a struct. T must have the same number of named public fields as row has fields.
 // The row and T fields will be matched by name. The match is case-insensitive.
 // The database column name can be overridden with a "db" struct tag.
@@ -326,8 +326,8 @@ func newNamedStructScanner[T any]() Scanner[T] {
 	return &strictNamedStructScanner[T]{}
 }
 
-// newLaxNamedStructScanner returns Scanner that scans a row into a T.
-// T must be a struct. T must have greater than or equal number of named public fields as row has fields.
+// newLaxNamedStructScanner returns a Scanner that scans a row into a T.
+// T must be a struct. T must have at least as many named public fields as row has fields.
 // The row and T fields will be matched by name. The match is case-insensitive.
 // The database column name can be overridden with a "db" struct tag.
 // If the "db" struct tag is "-" then the field will be ignored.
@@ -335,7 +335,7 @@ func newLaxNamedStructScanner[T any]() Scanner[T] {
 	return &laxNamedStructScanner[T]{}
 }
 
-// newAddrOfNamedStructScanner returns Scanner that scans a row into a *T.
+// newAddrOfNamedStructScanner returns a Scanner that scans a row into a *T.
 // T must be a struct. T must have the same number of named public fields as row has fields.
 // The row and T fields will be matched by name. The match is case-insensitive.
 // The database column name can be overridden with a "db" struct tag.
@@ -344,8 +344,8 @@ func newAddrOfNamedStructScanner[T any]() Scanner[*T] {
 	return newAddrScanner[T](newNamedStructScanner[T]())
 }
 
-// newAddrOfLaxNamedStructScanner returns Scanner that scans a row into a *T.
-// T must be a struct. T must have greater than or equal number of named public fields as row has fields.
+// newAddrOfLaxNamedStructScanner returns a Scanner that scans a row into a *T.
+// T must be a struct. T must have at least as many named public fields as row has fields.
 // The row and T fields will be matched by name. The match is case-insensitive.
 // The database column name can be overridden with a "db" struct tag.
 // If the "db" struct tag is "-" then the field will be ignored.
@@ -372,7 +372,7 @@ func RowToAddrOfStructByName[T any]() rowSpecRes[*T] {
 }
 
 // RowToStructByNameLax scans a row into a T.
-// T must be a struct. T must have greater than or equal number of named public fields as row has fields.
+// T must be a struct. T must have at least as many named public fields as row has fields.
 // The row and T fields will be matched by name. The match is case-insensitive.
 // The database column name can be overridden with a "db" struct tag.
 // If the "db" struct tag is "-" then the field will be ignored.
@@ -381,7 +381,7 @@ func RowToStructByNameLax[T any]() rowSpecRes[T] {
 }
 
 // RowToAddrOfStructByNameLax scans a row into a *T.
-// T must be a struct. T must have greater than or equal number of named public fields as row has fields.
+// T must be a struct. T must have at least as many named public fields as row has fields.
 // The row and T fields will be matched by name. The match is case-insensitive.
 // The database column name can be overridden with a "db" struct tag.
 // If the "db" struct tag is "-" then the field will be ignored.
@@ -505,10 +505,10 @@ var _ Scanner[struct{}] = (adapterScanner[struct{}])(nil)
 //
 //	pgxc.CollectRows(rows, pgxc.Adapt(myRowToFunc))
 //
-// This is only recommendation for custom implementations of RowToFunc during
+// This is only recommended for custom implementations of RowToFunc during
 // a migration process. Implementations of RowToFunc in pgx have native
 // pgx_collect implementations that are more concise and efficient. Custom
-// implementations can likely be refactored to work with RowToCustom which
+// implementations can likely be refactored into a Scanner, which
 // should be somewhat more efficient for queries over multiple rows.
 func Adapt[T any](rowTo pgx.RowToFunc[T]) RowSpec[T] {
 	return func() rowSpecRes[T] {
