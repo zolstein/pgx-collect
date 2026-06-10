@@ -1,3 +1,5 @@
+[![Go Reference](https://pkg.go.dev/badge/github.com/zolstein/pgx-collect.svg)](https://pkg.go.dev/github.com/zolstein/pgx-collect)
+
 # pgx-collect
 
 pgx-collect is a _nearly_ drop-in replacement for the pgx collection functions that offer
