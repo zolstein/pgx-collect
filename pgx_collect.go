@@ -406,10 +406,10 @@ func (rs *namedStructScanner[T]) initialize(rows pgx.Rows, lax bool) error {
 	var missingField string
 	var err error
 	rs.scanFields, missingField, err = GetStructRowFieldsByName(typ, fldDescs)
-	if !lax && missingField != "" {
-		return fmt.Errorf("cannot find field %s in returned row", missingField)
-	} else if err != nil {
+	if err != nil {
 		return err
+	} else if !lax && missingField != "" {
+		return fmt.Errorf("cannot find field %s in returned row", missingField)
 	}
 
 	return nil
