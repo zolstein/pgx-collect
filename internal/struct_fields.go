@@ -48,9 +48,14 @@ func (r StructRowFieldReceiver) getField(f structRowField) any {
 	return reflect.Value(r).FieldByIndex(f.path).Addr().Interface()
 }
 
+type fieldName struct {
+	name       string
+	exactMatch bool
+}
+
 type namedStructRowField struct {
 	field structRowField
-	name  string
+	fieldName
 }
 
 var namedStructRowFieldMap sync.Map
@@ -78,31 +83,41 @@ func computeStructFieldNames(t reflect.Type) []namedStructRowField {
 			// Handle anonymous struct embedding, but do not try to handle embedded pointers.
 			if sf.Anonymous && sf.Type.Kind() == reflect.Struct {
 				helper(sf.Type)
-			} else if sf.PkgPath == "" {
-				dbTag, dbTagPresent := sf.Tag.Lookup(structTagKey)
-				if dbTagPresent {
-					dbTag, _, _ = strings.Cut(dbTag, ",")
-				}
-				if dbTag == "-" {
-					// Field is ignored, skip it.
-					continue
-				}
-				colName := dbTag
-				if !dbTagPresent {
-					colName = sf.Name
-				}
-				fields = append(fields, namedStructRowField{
-					field: structRowField{
-						path: append([]int(nil), fieldStack...),
-					},
-					name: colName,
-				})
+			} else if field, ok := makeNamedStructRowField(sf, fieldStack); ok {
+				fields = append(fields, field)
 			}
 		}
 		fieldStack = fieldStack[:tail]
 	}
 	helper(t)
 	return fields
+}
+
+func makeNamedStructRowField(sf reflect.StructField, fieldStack []int) (field namedStructRowField, ok bool) {
+	if sf.PkgPath != "" {
+		return field, false
+	}
+	dbTag, dbTagPresent := sf.Tag.Lookup(structTagKey)
+	var colName string
+	if dbTagPresent {
+		dbTag, _, _ = strings.Cut(dbTag, ",")
+		if dbTag == "-" {
+			// Field is ignored, skip it.
+			return field, false
+		}
+		colName = dbTag
+	} else {
+		colName = strings.ReplaceAll(sf.Name, "_", "")
+	}
+	return namedStructRowField{
+		field: structRowField{
+			path: append([]int(nil), fieldStack...),
+		},
+		fieldName: fieldName {
+			name:       colName,
+			exactMatch: dbTagPresent,
+		},
+	}, true
 }
 
 // Map from reflect.Type -> []structRowField
@@ -240,7 +255,7 @@ func buildNamedStructRowFieldsEntry(
 	var missingField string
 	for i := range namedFields {
 		f := &namedFields[i]
-		fpos := fieldPosByName(fldDescs, f.name)
+		fpos := fieldPosByName(fldDescs, f.fieldName)
 		if fpos == -1 {
 			if missingField == "" {
 				missingField = f.name
@@ -294,16 +309,21 @@ func unsafeStringToBytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-func fieldPosByName(fldDescs []pgconn.FieldDescription, field string) (i int) {
+func fieldPosByName(fldDescs []pgconn.FieldDescription, field fieldName) (i int) {
 	i = -1
-	for i, desc := range fldDescs {
-
-		// Snake case support.
-		field = strings.ReplaceAll(field, "_", "")
-		descName := strings.ReplaceAll(desc.Name, "_", "")
-
-		if strings.EqualFold(descName, field) {
-			return i
+	if field.exactMatch {
+		for i, desc := range fldDescs {
+			if desc.Name == field.name {
+				return i
+			}
+		}
+	} else {
+		for i, desc := range fldDescs {
+			// Snake case support.
+			descName := strings.ReplaceAll(desc.Name, "_", "")
+			if strings.EqualFold(descName, field.name) {
+				return i
+			}
 		}
 	}
 	return
