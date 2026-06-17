@@ -72,6 +72,53 @@ func run(m *testing.M) (int, error) {
 	return m.Run(), nil
 }
 
+func BenchmarkBaseline(b *testing.B) {
+	ctx := context.Background()
+	records := make([]Record, N)
+	for i := 0; i < b.N; i++ {
+		records = records[:0]
+		rows, err := conn.Query(ctx, "select id, name, age, created_at from people") // Returns 1000 rows
+		if err != nil {
+			b.Fatal(err)
+		}
+		records, err := baselineAppendRows(records, rows)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(records) != N {
+			b.Fatal()
+		}
+	}
+}
+
+var scanTargets [4]any
+
+// baselineAppendRows is basically the fastest implementation one could write, against which other implementations
+// can be compared.
+func baselineAppendRows(slice []Record, rows pgx.Rows) (records []Record, err error) {
+	defer rows.Close()
+	records = slice[:N]
+
+	for i := 0; rows.Next(); i++ {
+		scanTargets := scanTargets[:]
+		scanTargets[0] = &records[i].ID
+		scanTargets[1] = &records[i].Name
+		scanTargets[2] = &records[i].Age
+		scanTargets[3] = &records[i].CreatedAt
+		err := rows.Scan(scanTargets...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return records, nil
+
+}
+
 func BenchmarkPgxCollectAppendRows(b *testing.B) {
 	ctx := context.Background()
 	records := make([]Record, N)
@@ -89,7 +136,6 @@ func BenchmarkPgxCollectAppendRows(b *testing.B) {
 			b.Fatal()
 		}
 	}
-
 }
 
 func BenchmarkPgxAppendRows(b *testing.B) {
