@@ -27,25 +27,26 @@ func (fs StructRowFields) Populate(r StructRowFieldReceiver, scanTargets []any) 
 
 // structRowField describes a field of a struct.
 type structRowField struct {
-	// TODO: It would be a bit more efficient to track the path using the pointer
-	// offset within the (outermost) struct and use unsafe.Pointer arithmetic to
-	// construct references when scanning rows. However, it's not clear it's worth
-	// using unsafe for this.
-	path []int
+	typeHandle typeHandle
+	offset     uintptr
 }
 
 func (f structRowField) isSet() bool {
-	return f.path != nil
+	return f.typeHandle != nil
 }
 
-type StructRowFieldReceiver reflect.Value
+type StructRowFieldReceiver struct {
+	ptr unsafe.Pointer
+}
 
 func ReceiverFromPointer[T any](ptr *T) StructRowFieldReceiver {
-	return StructRowFieldReceiver(reflect.ValueOf(ptr).Elem())
+	return StructRowFieldReceiver{
+		ptr: unsafe.Pointer(ptr),
+	}
 }
 
 func (r StructRowFieldReceiver) getField(f structRowField) any {
-	return reflect.Value(r).FieldByIndex(f.path).Addr().Interface()
+	return anyFromParts(f.typeHandle, unsafe.Add(r.ptr, f.offset))
 }
 
 type fieldName struct {
@@ -71,29 +72,26 @@ func lookupNamedStructRowFields(t reflect.Type) []namedStructRowField {
 
 func computeStructFieldNames(t reflect.Type) []namedStructRowField {
 	fields := make([]namedStructRowField, 0, t.NumField())
-	fieldStack := make([]int, 0, 1)
-
+	var fieldOffset uintptr
 	var helper func(t reflect.Type)
 	helper = func(t reflect.Type) {
-		tail := len(fieldStack)
-		fieldStack = append(fieldStack, 0)
 		for i := 0; i < t.NumField(); i++ {
 			sf := t.Field(i)
-			fieldStack[tail] = i
+			fieldOffset += sf.Offset
 			// Handle anonymous struct embedding, but do not try to handle embedded pointers.
 			if sf.Anonymous && sf.Type.Kind() == reflect.Struct {
 				helper(sf.Type)
-			} else if field, ok := makeNamedStructRowField(sf, fieldStack); ok {
+			} else if field, ok := makeNamedStructRowField(sf, fieldOffset); ok {
 				fields = append(fields, field)
 			}
+			fieldOffset -= sf.Offset
 		}
-		fieldStack = fieldStack[:tail]
 	}
 	helper(t)
 	return fields
 }
 
-func makeNamedStructRowField(sf reflect.StructField, fieldStack []int) (field namedStructRowField, ok bool) {
+func makeNamedStructRowField(sf reflect.StructField, fieldOffset uintptr) (field namedStructRowField, ok bool) {
 	if sf.PkgPath != "" {
 		return field, false
 	}
@@ -111,9 +109,10 @@ func makeNamedStructRowField(sf reflect.StructField, fieldStack []int) (field na
 	}
 	return namedStructRowField{
 		field: structRowField{
-			path: append([]int(nil), fieldStack...),
+			typeHandle: typeToHandle(sf.Type),
+			offset:     fieldOffset,
 		},
-		fieldName: fieldName {
+		fieldName: fieldName{
 			name:       colName,
 			exactMatch: dbTagPresent,
 		},
@@ -291,9 +290,7 @@ func colsMatch(fldDescs []pgconn.FieldDescription, colNames []string) bool {
 func hashColNames(fldDescs []pgconn.FieldDescription) uint64 {
 	hasher := fnv.New64a()
 	var zeroByte [1]byte
-	_ = zeroByte
 	for _, f := range fldDescs {
-		// bs := unsafe.Slice(unsafe.StringData(f.Name), len(f.Name))
 		bs := unsafeStringToBytes(f.Name)
 		hasher.Write(bs)
 		// Writing zero bytes between field names reduces the likelihood of collisions.
@@ -303,8 +300,6 @@ func hashColNames(fldDescs []pgconn.FieldDescription) uint64 {
 	return hasher.Sum64()
 }
 
-// TODO: If we reduce the version requirement back down to 1.19, we need to conditionally
-// compile a version of this that works.
 func unsafeStringToBytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
