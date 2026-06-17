@@ -2,7 +2,7 @@
 
 # pgx-collect
 
-pgx-collect is a _nearly_ drop-in replacement for the pgx collection functions that offer
+pgx-collect is a functionally drop-in replacement for the pgx collection functions that offer
 lower overhead.
 
 pgx offers a very convenient set of functions for parsing values from rows, while handling
@@ -72,9 +72,16 @@ and a 100x reduction in objects allocated. Those numbers would vary greatly by w
 real-world benefits are unlikely to be this large, but they might still have been enough to
 noticeably improve query throughput, especially in pathological cases.
 
-Today, the numbers are likely to be much smaller because I was able to rewrite optimizations
-for many of the most egregious cases in a way that could be upstreamed into pgx. Since then,
-I have not measured the impact. I would still expect performance improvements in some cases.
+Today, the numbers are much smaller because I was able to rewrite optimizations for some of the
+most egregious problems in a way that could be upstreamed into pgx. However, my benchmarks still
+show substantial improvements, with performance that nearly matches an optimized baseline that
+doesn't use reflection.
+
+| Name | Runs | µs/op | B/op | allocations/op |
+| :--- | :--- | :--- | :--- | :--- |
+| Baseline | 6,034 | 205.002 | 22,498 | 1,929 |
+| PgxAppendRows | 2,058 | 748.721 | 174,488 | 4,929 |
+| PgxCollectAppendRows | 7,048 | 219.394 | 22,625 | 1,932 |
 
 I encourage anyone using these pgx's collect functions to try out pgx-collect, measure
 the difference, and share the results, particularly if there are further opportunities 
