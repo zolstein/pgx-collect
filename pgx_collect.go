@@ -3,6 +3,7 @@ package pgx_collect
 import (
 	"fmt"
 	"reflect"
+	"runtime"
 
 	"github.com/jackc/pgx/v5"
 
@@ -433,7 +434,16 @@ func (rs *structScanner[T]) ScanRowInto(receiver *T, rows pgx.Rows) error {
 	}
 	r := ReceiverFromPointer(receiver)
 	rs.scanFields.Populate(r, rs.scanTargets)
-	return rows.Scan(rs.scanTargets...)
+	err := rows.Scan(rs.scanTargets...)
+	// Clear references into receiver in scan targets before KeepAlive.
+	clear(rs.scanTargets)
+	// runtime.KeepAlive ensures the runtime keeps the pointer to the
+	// receiver alive through the scanning despite unsafe trickery.
+	// This is likely not necessary, since the runtime should be able
+	// to track the lifetime of the value as an unsafe pointer, but
+	// adding the KeepAlive costs very little.
+	runtime.KeepAlive(receiver)
+	return err
 }
 
 // addrScannerInfo wraps a Scanner[T] into a Scanner[*T].
