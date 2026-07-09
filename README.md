@@ -66,26 +66,28 @@ a large speedup.
 
 # How much faster is it?
 
-At the time of writing, when using AppendRows to query 1000 rows and 4 columns in a benchmark,
-I demonstrated a 3-4x reduction in total runtime, a 10x reduction in memory allocated,
-and a 100x reduction in objects allocated. Those numbers would vary greatly by workload, and
-real-world benefits are unlikely to be this large, but they might still have been enough to
-noticeably improve query throughput, especially in pathological cases.
+At the time of writing, when using AppendRows to query 1000 rows and 4 columns in a
+benchmark, I demonstrated a 3-4x reduction in total runtime, a 10x reduction in memory
+allocated, and a 100x reduction in objects allocated.
 
-Today, the numbers are much smaller because I was able to rewrite optimizations for some of the
-most egregious problems in a way that could be upstreamed into pgx. However, my benchmarks still
-show substantial improvements, with performance that nearly matches an optimized baseline that
-doesn't use reflection.
+Today, the numbers are smaller because I was able to rewrite optimizations for some of the
+most egregious problems in a way that could be upstreamed into pgx. However, my benchmarks
+still show substantial improvements, with performance that nearly matches an optimized
+baseline that doesn't use reflection.
 
-| Name | Runs | µs/op | B/op | allocations/op |
-| :--- | :--- | :--- | :--- | :--- |
-| Baseline | 6,034 | 205.002 | 22,498 | 1,929 |
-| PgxAppendRows | 2,058 | 748.721 | 174,488 | 4,929 |
-| PgxCollectAppendRows | 7,048 | 219.394 | 22,625 | 1,932 |
+| Name                     |  Runs |   µs/op |    B/op | allocations/op |
+| :---                     | :---  | :---    | :---    | :---           |
+| Baseline                 | 5,827 | 178.896 |  15,009 |          1,006 |
+| PgxAppendRows            | 2,356 | 498.074 | 167,000 |          4,006 |
+| PgxCollectAppendRows     | 6,244 | 186.291 |  15,137 |          1,009 |
 
-I encourage anyone using these pgx's collect functions to try out pgx-collect, measure
-the difference, and share the results, particularly if there are further opportunities 
-to optimize.
+Those numbers will vary greatly by workload, and real-world benefits are unlikely to be
+this large, but they might still have been enough to noticeably improve query throughput,
+especially in pathological cases.
+
+I encourage anyone using these pgx's Collect functions to try out pgx-collect, measure the
+difference, and share the results, particularly if there are further opportunities to
+optimize.
 
 # Why not merge into pgx? Why create a separate library?
 
