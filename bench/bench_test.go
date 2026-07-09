@@ -2,14 +2,15 @@ package pgx_collect_test
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	pgxc "github.com/zolstein/pgx-collect"
@@ -17,7 +18,7 @@ import (
 
 type Person struct {
 	Name string
-	Age  sql.Null[int64]
+	Age  pgtype.Int4
 }
 
 type Record struct {
@@ -73,6 +74,8 @@ func run(m *testing.M) (int, error) {
 }
 
 func BenchmarkBaseline(b *testing.B) {
+	runtime.GC()
+	b.ResetTimer()
 	ctx := context.Background()
 	records := make([]Record, N)
 	for i := 0; i < b.N; i++ {
@@ -120,6 +123,8 @@ func baselineAppendRows(slice []Record, rows pgx.Rows) (records []Record, err er
 }
 
 func BenchmarkPgxCollectAppendRows(b *testing.B) {
+	runtime.GC()
+	b.ResetTimer()
 	ctx := context.Background()
 	records := make([]Record, N)
 	for i := 0; i < b.N; i++ {
@@ -139,6 +144,8 @@ func BenchmarkPgxCollectAppendRows(b *testing.B) {
 }
 
 func BenchmarkPgxAppendRows(b *testing.B) {
+	runtime.GC()
+	b.ResetTimer()
 	ctx := context.Background()
 	records := make([]Record, N)
 	for i := 0; i < b.N; i++ {
@@ -168,11 +175,11 @@ func generatePeople(n int) []Record {
 			ID: int64(i + 1),
 			Person: Person{
 				Name: adjectives[rng.IntN(len(adjectives))] + "_" + nouns[rng.IntN(len(nouns))],
-				Age: func() sql.Null[int64] {
+				Age: func() pgtype.Int4 {
 					if rng.IntN(10) == 0 { // ~10% NULL ages
-						return sql.Null[int64]{}
+						return pgtype.Int4{}
 					}
-					return sql.Null[int64]{V: int64(18 + rng.IntN(65)), Valid: true}
+					return pgtype.Int4{Int32: int32(18 + rng.IntN(65)), Valid: true}
 				}(),
 			},
 			CreatedAt: time.Now().Add(-time.Duration(rng.IntN(365*24)) * time.Hour),
@@ -202,7 +209,7 @@ func seedPeople(ctx context.Context, records []Record) error {
 			r := records[i]
 			var age any
 			if r.Age.Valid {
-				age = r.Age.V
+				age = r.Age.Int32
 			}
 			return []any{r.ID, r.Name, age, r.CreatedAt}, nil
 		}),
