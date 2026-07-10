@@ -68,22 +68,21 @@ func AppendRowsUsing[T any, S ~[]T](
 		return nil, err
 	}
 
-	startingLen := len(slice)
-	var startingPtr *T
-	if cap(slice) > 0 {
-		startingPtr = &slice[:cap(slice)][0]
-	}
+	start := len(slice)
+	original := slice[:cap(slice)]
 
 	defer func() {
 		// Named return values guarantee this err is the err that's actually returned.
-		if err != nil && len(slice) > startingLen && &slice[0] == startingPtr {
-			// An error occurred AND slice still has the same backing array as the input slice.
-			// Therefore, some written values are visible in the input slice. This could cause
-			// problems, especially if T contains pointers which are kept alive.
-			// To mitigate this, zero out the slice beyond the starting length.
-			for i := range slice[startingLen:] {
+		if err != nil {
+			// Clear values written to the original slice's backing array before
+			// returning. This prevents successfully scanned values from leaking to the
+			// caller, and pointers being kept alive, preventing GC. Only clear values
+			// that were written.
+			end := min(len(slice), cap(original))
+			toZero := original[start:end]
+			for i := range toZero {
 				var zero T
-				slice[startingLen+i] = zero
+				toZero[i] = zero
 			}
 		}
 	}()
