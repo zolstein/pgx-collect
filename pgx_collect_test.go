@@ -2,10 +2,12 @@ package pgx_collect_test
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	pgxc "github.com/zolstein/pgx-collect"
 	pgxc_internal "github.com/zolstein/pgx-collect/internal"
@@ -122,20 +124,31 @@ func TestAppendRows(t *testing.T) {
 	})
 
 	t.Run("error", func(t *testing.T) {
+		emptyCaps := func(size int) []int {
+			permutations := []int{0, 1, 2, size - 1, size, size + 1}
+			permutations = slices.DeleteFunc(permutations, func(v int) bool { return v < 0 })
+			slices.Sort(permutations)
+			permutations = slices.Compact(permutations)
+			return permutations
+		}
 		for _, size := range sizes {
-			t.Run(fmt.Sprintf("%d", size), func(t *testing.T) {
-				_, rows := makeExpectedAndRows(size)
-				rows.ThenErr(fmt.Errorf("arbitrary error"))
+			for _, emptyCap := range emptyCaps(size) {
+				t.Run(fmt.Sprintf("%d/%d", size, emptyCap), func(t *testing.T) {
+					_, rows := makeExpectedAndRows(size)
+					rows.ThenErr(fmt.Errorf("arbitrary error"))
 
-				base := []int{1, 2, 3}
-				unchanged := []int{1, 2, 3}
+					baseData := []int{1, 2, 3}
+					base := make([]int, 0, len(baseData)+emptyCap)
+					base = append(base, baseData...)
 
-				actual, err := pgxc.AppendRows(base, rows, pgxc.RowTo[int])
-				assert.Error(t, err)
-				assert.Nil(t, actual)
-				assert.True(t, rows.IsClosed())
-				assert.Equal(t, unchanged, base)
-			})
+					actual, err := pgxc.AppendRows(base, rows, pgxc.RowTo[int])
+					assert.Error(t, err)
+					assert.Nil(t, actual)
+					assert.True(t, rows.IsClosed())
+					assert.Equal(t, baseData, base)
+					require.Equal(t, make([]int, emptyCap), base[len(baseData):cap(base)])
+				})
+			}
 		}
 	})
 
