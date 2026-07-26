@@ -82,7 +82,7 @@ baseline that doesn't use reflection.
 | PgxCollectAppendRows     | 6,244 | 186.291 |  15,137 |          1,009 |
 
 Those numbers will vary greatly by workload, and real-world benefits are unlikely to be
-this large, but they might still have been enough to noticeably improve query throughput,
+this large, but they might still be to noticeably improve query throughput,
 especially in pathological cases.
 
 I encourage anyone using these pgx's Collect functions to try out pgx-collect, measure the
@@ -92,7 +92,7 @@ optimize.
 # Why not merge into pgx? Why create a separate library?
 
 I would love for this code to be merged into pgx. (Some optimizations based on this work have 
-been already. However, even though the pgx-collect API is designed as a drop-in replacement 
+been already.) However, even though the pgx-collect API is designed as a drop-in replacement 
 for all idiomatic use-cases, the performance improvements required changing the types of some 
 values in the public API - thus, if these changes were integrated into pgx, some working code 
 could stop compiling.
